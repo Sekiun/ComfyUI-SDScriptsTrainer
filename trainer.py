@@ -18,6 +18,7 @@ class SDScriptsTrainer:
         self.venv_python = os.path.join(self.sd_scripts_path, "venv", "Scripts", "python.exe")
         self.accelerate_path = os.path.join(self.sd_scripts_path, "venv", "Scripts", "accelerate.exe")
         self.train_script = os.path.join(self.sd_scripts_path, "sdxl_train_network.py")
+        self._supports_split_text_encoder_lr = self._detect_text_encoder_lr_split()
 
         if not os.path.exists(self.venv_python):
             raise FileNotFoundError(f"Python not found: {self.venv_python}")
@@ -27,6 +28,14 @@ class SDScriptsTrainer:
     def _toml_str(self, value: str) -> str:
         escaped = value.replace("\\", "\\\\").replace('"', "\\\"")
         return f"\"{escaped}\""
+
+    def _detect_text_encoder_lr_split(self) -> bool:
+        try:
+            with open(self.train_script, "r", encoding="utf-8") as f:
+                contents = f.read()
+            return "text_encoder_lr1" in contents or "--text_encoder_lr1" in contents
+        except OSError:
+            return False
 
     def _create_dataset_toml(self, dataset_config: dict, temp_dir: str) -> str:
         toml_path = os.path.join(temp_dir, "dataset_config.toml")
@@ -100,7 +109,7 @@ class SDScriptsTrainer:
             return fallback
         return lr_value
 
-    def _build_command(self, dataset_toml: str, train_params: dict,
+    def _build_command(self, dataset_toml: str, dataset_config: dict, train_params: dict,
                        output_name: str, output_dir: str) -> list:
         if os.path.exists(self.accelerate_path):
             cmd = [
@@ -135,11 +144,20 @@ class SDScriptsTrainer:
             f"--network_alpha={train_params['network_alpha']}",
             f"--learning_rate={learning_rate}",
             f"--unet_lr={unet_lr}",
-            f"--text_encoder_lr1={text_lr1}",
-            f"--text_encoder_lr2={text_lr2}",
             f"--optimizer_type={train_params.get('optimizer_type', 'AdamW8bit')}",
             f"--lr_scheduler={train_params.get('lr_scheduler', 'constant')}",
         ])
+        if self._supports_split_text_encoder_lr:
+            cmd.extend([
+                f"--text_encoder_lr1={text_lr1}",
+                f"--text_encoder_lr2={text_lr2}",
+            ])
+        else:
+            cmd.extend([
+                "--text_encoder_lr",
+                str(text_lr1),
+                str(text_lr2),
+            ])
 
         max_train_steps = int(train_params.get("max_train_steps", 0) or 0)
         if max_train_steps > 0:
@@ -177,6 +195,18 @@ class SDScriptsTrainer:
                 cmd.append("--cache_latents_to_disk")
 
         cache_te = bool(train_params.get("cache_text_encoder_outputs", True))
+        if cache_te and dataset_config.get("shuffle_caption", True):
+            cache_te = False
+            logger.warning("Disabled cache_text_encoder_outputs because shuffle_caption is enabled.")
+        if cache_te and float(dataset_config.get("caption_dropout_rate", 0) or 0) > 0:
+            cache_te = False
+            logger.warning("Disabled cache_text_encoder_outputs because caption_dropout_rate is enabled.")
+        if cache_te and float(dataset_config.get("caption_tag_dropout_rate", 0) or 0) > 0:
+            cache_te = False
+            logger.warning("Disabled cache_text_encoder_outputs because caption_tag_dropout_rate is enabled.")
+        if cache_te and int(dataset_config.get("caption_dropout_every_n_epochs", 0) or 0) > 0:
+            cache_te = False
+            logger.warning("Disabled cache_text_encoder_outputs because caption_dropout_every_n_epochs is enabled.")
         if cache_te:
             cmd.append("--cache_text_encoder_outputs")
             if train_params.get("cache_text_encoder_outputs_to_disk", True):
@@ -205,7 +235,7 @@ class SDScriptsTrainer:
 
         try:
             dataset_toml = self._create_dataset_toml(dataset_config, temp_dir)
-            cmd = self._build_command(dataset_toml, train_params, output_name, output_dir)
+            cmd = self._build_command(dataset_toml, dataset_config, train_params, output_name, output_dir)
 
             logger.info("Executing command: %s", " ".join(cmd))
             print("[SD-Scripts] Starting LoRA training...")

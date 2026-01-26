@@ -1,0 +1,14 @@
+[project]
+name = "SDScriptsTrainer"
+description = "Utility node to train SDXL lora with external tool, sd-scripts."
+version = "1.0.0"
+license = {file = "LICENSE"}
+
+[project.urls]
+Repository = "https://github.com/Sekiun/ComfyUI-SDScriptsTrainer"
+#  Used by Comfy Registry https://comfyregistry.org
+
+[tool.comfy]
+PublisherId = "sekiun"
+DisplayName = "ComfyUI-SDScriptsTrainer"
+Icon = ""

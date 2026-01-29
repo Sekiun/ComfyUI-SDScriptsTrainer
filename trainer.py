@@ -15,15 +15,30 @@ class SDScriptsTrainer:
 
     def __init__(self, sd_scripts_path: str):
         self.sd_scripts_path = os.path.abspath(os.path.expandvars(os.path.expanduser(sd_scripts_path)))
-        self.venv_python = os.path.join(self.sd_scripts_path, "venv", "Scripts", "python.exe")
-        self.accelerate_path = os.path.join(self.sd_scripts_path, "venv", "Scripts", "accelerate.exe")
+        self.venv_python, self.accelerate_path = self._resolve_venv_paths()
         self.train_script = os.path.join(self.sd_scripts_path, "sdxl_train_network.py")
         self._supports_split_text_encoder_lr = self._detect_text_encoder_lr_split()
 
         if not os.path.exists(self.venv_python):
-            raise FileNotFoundError(f"Python not found: {self.venv_python}")
+            raise FileNotFoundError(
+                "Python not found in venv. Tried: "
+                f"{os.path.join(self.sd_scripts_path, 'venv', 'Scripts', 'python.exe')} and "
+                f"{os.path.join(self.sd_scripts_path, 'venv', 'bin', 'python')}"
+            )
         if not os.path.exists(self.train_script):
             raise FileNotFoundError(f"Train script not found: {self.train_script}")
+
+    def _resolve_venv_paths(self):
+        windows_python = os.path.join(self.sd_scripts_path, "venv", "Scripts", "python.exe")
+        windows_accelerate = os.path.join(self.sd_scripts_path, "venv", "Scripts", "accelerate.exe")
+        linux_python = os.path.join(self.sd_scripts_path, "venv", "bin", "python")
+        linux_accelerate = os.path.join(self.sd_scripts_path, "venv", "bin", "accelerate")
+
+        if os.path.exists(windows_python):
+            return windows_python, windows_accelerate
+        if os.path.exists(linux_python):
+            return linux_python, linux_accelerate
+        return windows_python, windows_accelerate
 
     def _toml_str(self, value: str) -> str:
         escaped = value.replace("\\", "\\\\").replace('"', "\\\"")

@@ -5,6 +5,8 @@ SD-Scripts LoRA training nodes for ComfyUI.
 import os
 import folder_paths
 
+from .presets import get_preset_choices
+
 
 class SDScriptsDatasetConfig:
     """Dataset config builder for sd-scripts --dataset_config."""
@@ -106,6 +108,10 @@ class SDScriptsDatasetConfig:
                     "step": 0.01,
                     "tooltip": "Caption tag dropout rate (0 = off)."
                 }),
+                "preset_xmlora": (get_preset_choices(), {
+                    "default": "(none)",
+                    "tooltip": "Select a sample xmlora preset. Values are applied immediately in the node UI."
+                }),
             }
         }
 
@@ -131,6 +137,7 @@ class SDScriptsDatasetConfig:
         caption_dropout_rate=0.0,
         caption_dropout_every_n_epochs=0,
         caption_tag_dropout_rate=0.0,
+        preset_xmlora="(none)",
     ):
         config = {
             "image_dir": image_dir,
@@ -231,7 +238,18 @@ class SDScriptsTrainParams:
                     "step": 1e-6,
                     "tooltip": "Text Encoder 2 learning rate (0 = use text_encoder_lr)."
                 }),
-                "optimizer_type": (["AdamW8bit", "AdamW", "Adafactor", "Lion8bit"], {
+                "optimizer_type": ([
+                    "AdamW8bit",
+                    "AdamW",
+                    "Adafactor",
+                    "Lion8bit",
+                    "Lion",
+                    "Came",
+                    "Custom",
+                    "DAdaptLion",
+                    "prodigy",
+                    "RAdamScheduleFree",
+                ], {
                     "default": "AdamW8bit",
                     "tooltip": "Optimizer type."
                 }),
@@ -305,6 +323,10 @@ class SDScriptsTrainParams:
                     "max": 2147483647,
                     "tooltip": "Random seed."
                 }),
+                "preset_xmlora": (get_preset_choices(), {
+                    "default": "(none)",
+                    "tooltip": "Select a sample xmlora preset. Values are applied immediately in the node UI."
+                }),
             }
         }
 
@@ -339,6 +361,7 @@ class SDScriptsTrainParams:
         gradient_accumulation_steps=1,
         lr_warmup_steps=0,
         seed=42,
+        preset_xmlora="(none)",
     ):
         params = {
             "base_model_path": base_model_path,

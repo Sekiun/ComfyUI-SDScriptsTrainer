@@ -6,6 +6,9 @@ from .nodes import (
     SDScriptsTrainParams,
     SDScriptsLoRATrain
 )
+from .preset_api import register_preset_routes
+
+WEB_DIRECTORY = "./web"
 
 NODE_CLASS_MAPPINGS = {
     "SDScriptsDatasetConfig": SDScriptsDatasetConfig,
@@ -19,4 +22,10 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "SDScriptsLoRATrain": "SD-Scripts LoRA Train",
 }
 
-__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
+try:
+    register_preset_routes()
+except RuntimeError:
+    # Running outside of ComfyUI runtime (e.g. during tooling)
+    pass
+
+__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]

@@ -15,15 +15,30 @@ class SDScriptsTrainer:
 
     def __init__(self, sd_scripts_path: str):
         self.sd_scripts_path = os.path.abspath(os.path.expandvars(os.path.expanduser(sd_scripts_path)))
-        self.venv_python = os.path.join(self.sd_scripts_path, "venv", "Scripts", "python.exe")
-        self.accelerate_path = os.path.join(self.sd_scripts_path, "venv", "Scripts", "accelerate.exe")
+        self.venv_python = self._resolve_venv_executable(["python.exe", "python3", "python"])
+        self.accelerate_path = self._resolve_venv_executable(["accelerate.exe", "accelerate"])
         self.train_script = os.path.join(self.sd_scripts_path, "sdxl_train_network.py")
         self._supports_split_text_encoder_lr = self._detect_text_encoder_lr_split()
 
-        if not os.path.exists(self.venv_python):
-            raise FileNotFoundError(f"Python not found: {self.venv_python}")
+        if self.venv_python is None:
+            raise FileNotFoundError(
+                f"Python not found in {os.path.join(self.sd_scripts_path, 'venv', 'Scripts')} "
+                f"or {os.path.join(self.sd_scripts_path, 'venv', 'bin')}"
+            )
         if not os.path.exists(self.train_script):
             raise FileNotFoundError(f"Train script not found: {self.train_script}")
+
+    def _resolve_venv_executable(self, names: list[str]) -> str | None:
+        candidate_dirs = [
+            os.path.join(self.sd_scripts_path, "venv", "Scripts"),
+            os.path.join(self.sd_scripts_path, "venv", "bin"),
+        ]
+        for directory in candidate_dirs:
+            for name in names:
+                path = os.path.join(directory, name)
+                if os.path.exists(path):
+                    return path
+        return None
 
     def _toml_str(self, value: str) -> str:
         escaped = value.replace("\\", "\\\\").replace('"', "\\\"")
@@ -109,9 +124,23 @@ class SDScriptsTrainer:
             return fallback
         return lr_value
 
+    def _normalize_optimizer_type(self, optimizer_type) -> str:
+        if not optimizer_type:
+            return "AdamW8bit"
+
+        value = str(optimizer_type).strip()
+        lowered = value.lower()
+        if lowered == "came":
+            # sd-scripts treats unknown names as torch.optim classes.
+            # "Came" therefore fails unless module path is explicit.
+            return "came_pytorch.CAME"
+        if lowered == "prodigy":
+            return "Prodigy"
+        return value
+
     def _build_command(self, dataset_toml: str, dataset_config: dict, train_params: dict,
                        output_name: str, output_dir: str) -> list:
-        if os.path.exists(self.accelerate_path):
+        if self.accelerate_path and os.path.exists(self.accelerate_path):
             cmd = [
                 self.accelerate_path,
                 "launch",
@@ -132,6 +161,7 @@ class SDScriptsTrainer:
         text_lr_base = self._resolve_lr(train_params.get("text_encoder_lr"), learning_rate)
         text_lr1 = self._resolve_lr(train_params.get("text_encoder_lr1"), text_lr_base)
         text_lr2 = self._resolve_lr(train_params.get("text_encoder_lr2"), text_lr_base)
+        optimizer_type = self._normalize_optimizer_type(train_params.get("optimizer_type", "AdamW8bit"))
 
         cmd.extend([
             f"--pretrained_model_name_or_path={train_params['base_model_path']}",
@@ -144,7 +174,7 @@ class SDScriptsTrainer:
             f"--network_alpha={train_params['network_alpha']}",
             f"--learning_rate={learning_rate}",
             f"--unet_lr={unet_lr}",
-            f"--optimizer_type={train_params.get('optimizer_type', 'AdamW8bit')}",
+            f"--optimizer_type={optimizer_type}",
             f"--lr_scheduler={train_params.get('lr_scheduler', 'constant')}",
         ])
         if self._supports_split_text_encoder_lr:

@@ -1,5 +1,5 @@
-﻿"""
-sd-scripts subprocess launcher for SDXL LoRA training.
+"""
+sd-scripts subprocess launcher for LoRA training.
 """
 
 import os
@@ -10,14 +10,40 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def normalize_filesystem_path(value):
+    if value is None:
+        return value
+
+    path = str(value).strip()
+    if not path:
+        return path
+
+    path = os.path.expandvars(os.path.expanduser(path))
+    if os.name != "nt":
+        path = path.replace("\\", "/")
+        home_dir = os.path.expanduser("~")
+        if path == "/user" or path.startswith("/user/"):
+            path = home_dir + path[len("/user"):]
+        elif path == "user" or path.startswith("user/"):
+            remainder = path[len("user/"):] if path != "user" else ""
+            path = os.path.join(home_dir, remainder)
+
+    return os.path.abspath(path)
+
+
 class SDScriptsTrainer:
-    """Run sd-scripts SDXL LoRA training via accelerate."""
+    """Run sd-scripts LoRA training via accelerate."""
 
     def __init__(self, sd_scripts_path: str):
-        self.sd_scripts_path = os.path.abspath(os.path.expandvars(os.path.expanduser(sd_scripts_path)))
+        self.sd_scripts_path = normalize_filesystem_path(sd_scripts_path)
         self.venv_python, self.accelerate_path = self._resolve_venv_paths()
-        self.train_script = os.path.join(self.sd_scripts_path, "sdxl_train_network.py")
-        self._supports_split_text_encoder_lr = self._detect_text_encoder_lr_split()
+        self.train_scripts = {
+            "sdxl": os.path.join(self.sd_scripts_path, "sdxl_train_network.py"),
+            "anima": os.path.join(self.sd_scripts_path, "anima_train_network.py"),
+        }
+        self.train_script = self.train_scripts["sdxl"]
+        self._supports_split_text_encoder_lr = self._detect_text_encoder_lr_split(self.train_script)
+        self._supports_qwen_image_vae_2d = self._script_contains(self.train_scripts["anima"], "qwen_image_vae_2d")
 
         if not os.path.exists(self.venv_python):
             raise FileNotFoundError(
@@ -25,8 +51,11 @@ class SDScriptsTrainer:
                 f"{os.path.join(self.sd_scripts_path, 'venv', 'Scripts', 'python.exe')} and "
                 f"{os.path.join(self.sd_scripts_path, 'venv', 'bin', 'python')}"
             )
-        if not os.path.exists(self.train_script):
-            raise FileNotFoundError(f"Train script not found: {self.train_script}")
+        if not os.path.exists(self.train_scripts["sdxl"]) and not os.path.exists(self.train_scripts["anima"]):
+            raise FileNotFoundError(
+                "Train script not found. Tried: "
+                f"{self.train_scripts['sdxl']} and {self.train_scripts['anima']}"
+            )
 
     def _resolve_venv_paths(self):
         windows_python = os.path.join(self.sd_scripts_path, "venv", "Scripts", "python.exe")
@@ -44,18 +73,33 @@ class SDScriptsTrainer:
         escaped = value.replace("\\", "\\\\").replace('"', "\\\"")
         return f"\"{escaped}\""
 
-    def _detect_text_encoder_lr_split(self) -> bool:
+    def _script_contains(self, script_path: str, needle: str) -> bool:
         try:
-            with open(self.train_script, "r", encoding="utf-8") as f:
+            with open(script_path, "r", encoding="utf-8") as f:
                 contents = f.read()
-            return "text_encoder_lr1" in contents or "--text_encoder_lr1" in contents
+            return needle in contents
         except OSError:
             return False
+
+    def _detect_text_encoder_lr_split(self, script_path: str) -> bool:
+        return self._script_contains(script_path, "text_encoder_lr1") or self._script_contains(script_path, "--text_encoder_lr1")
+
+    def _normalize_model_type(self, model_type: str) -> str:
+        normalized = (model_type or "sdxl").strip().lower()
+        if normalized not in self.train_scripts:
+            raise ValueError(f"Unsupported model_type: {model_type}")
+        return normalized
+
+    def _train_script_for_model(self, model_type: str) -> str:
+        train_script = self.train_scripts[self._normalize_model_type(model_type)]
+        if not os.path.exists(train_script):
+            raise FileNotFoundError(f"Train script not found: {train_script}")
+        return train_script
 
     def _create_dataset_toml(self, dataset_config: dict, temp_dir: str) -> str:
         toml_path = os.path.join(temp_dir, "dataset_config.toml")
 
-        image_dir = dataset_config["image_dir"]
+        image_dir = normalize_filesystem_path(dataset_config["image_dir"])
         lines = [
             "[general]",
             f"shuffle_caption = {str(dataset_config.get('shuffle_caption', True)).lower()}",
@@ -124,56 +168,55 @@ class SDScriptsTrainer:
             return fallback
         return lr_value
 
-    def _build_command(self, dataset_toml: str, dataset_config: dict, train_params: dict,
-                       output_name: str, output_dir: str) -> list:
+    def _base_command(self, train_script: str) -> list:
         if os.path.exists(self.accelerate_path):
-            cmd = [
+            return [
                 self.accelerate_path,
                 "launch",
                 "--num_cpu_threads_per_process", "1",
-                self.train_script,
+                train_script,
             ]
-        else:
-            cmd = [
-                self.venv_python,
-                "-m", "accelerate",
-                "launch",
-                "--num_cpu_threads_per_process", "1",
-                self.train_script,
-            ]
+        return [
+            self.venv_python,
+            "-m", "accelerate",
+            "launch",
+            "--num_cpu_threads_per_process", "1",
+            train_script,
+        ]
 
-        learning_rate = float(train_params["learning_rate"])
-        unet_lr = self._resolve_lr(train_params.get("unet_lr"), learning_rate)
-        text_lr_base = self._resolve_lr(train_params.get("text_encoder_lr"), learning_rate)
-        text_lr1 = self._resolve_lr(train_params.get("text_encoder_lr1"), text_lr_base)
-        text_lr2 = self._resolve_lr(train_params.get("text_encoder_lr2"), text_lr_base)
+    def _append_optional_path(self, cmd: list, option: str, value):
+        if value is not None and str(value).strip():
+            cmd.append(f"{option}={normalize_filesystem_path(value)}")
 
-        cmd.extend([
-            f"--pretrained_model_name_or_path={train_params['base_model_path']}",
-            f"--dataset_config={dataset_toml}",
-            f"--output_dir={output_dir}",
-            f"--output_name={output_name}",
-            "--save_model_as=safetensors",
-            "--network_module=networks.lora",
-            f"--network_dim={train_params['network_dim']}",
-            f"--network_alpha={train_params['network_alpha']}",
-            f"--learning_rate={learning_rate}",
-            f"--unet_lr={unet_lr}",
-            f"--optimizer_type={train_params.get('optimizer_type', 'AdamW8bit')}",
-            f"--lr_scheduler={train_params.get('lr_scheduler', 'constant')}",
-        ])
-        if self._supports_split_text_encoder_lr:
-            cmd.extend([
-                f"--text_encoder_lr1={text_lr1}",
-                f"--text_encoder_lr2={text_lr2}",
-            ])
-        else:
-            cmd.extend([
-                "--text_encoder_lr",
-                str(text_lr1),
-                str(text_lr2),
-            ])
+    def _append_positive_int(self, cmd: list, option: str, value):
+        int_value = int(value or 0)
+        if int_value > 0:
+            cmd.append(f"{option}={int_value}")
 
+    def _append_float_if_set(self, cmd: list, option: str, value):
+        if value is None:
+            return
+        try:
+            float_value = float(value)
+        except (TypeError, ValueError):
+            return
+        if float_value < 0:
+            return
+        cmd.append(f"{option}={float_value}")
+
+    def _append_network_args(self, cmd: list, train_params: dict):
+        network_args = []
+        if train_params.get("train_llm_adapter", False):
+            network_args.append("train_llm_adapter=True")
+        for key in ("network_reg_dims", "network_reg_lrs", "include_patterns", "exclude_patterns"):
+            value = train_params.get(key)
+            if value is not None and str(value).strip():
+                network_args.append(f"{key}={str(value).strip()}")
+        if network_args:
+            cmd.append("--network_args")
+            cmd.extend(network_args)
+
+    def _append_common_options(self, cmd: list, train_params: dict):
         max_train_steps = int(train_params.get("max_train_steps", 0) or 0)
         if max_train_steps > 0:
             cmd.append(f"--max_train_steps={max_train_steps}")
@@ -203,6 +246,7 @@ class SDScriptsTrainer:
         if train_params.get("gradient_checkpointing", True):
             cmd.append("--gradient_checkpointing")
 
+    def _append_cache_options(self, cmd: list, dataset_config: dict, train_params: dict) -> bool:
         cache_latents = bool(train_params.get("cache_latents", True))
         if cache_latents:
             cmd.append("--cache_latents")
@@ -226,6 +270,89 @@ class SDScriptsTrainer:
             cmd.append("--cache_text_encoder_outputs")
             if train_params.get("cache_text_encoder_outputs_to_disk", True):
                 cmd.append("--cache_text_encoder_outputs_to_disk")
+        return cache_te
+
+    def _build_command(self, dataset_toml: str, dataset_config: dict, train_params: dict,
+                       output_name: str, output_dir: str) -> list:
+        model_type = self._normalize_model_type(train_params.get("model_type", "sdxl"))
+        train_script = self._train_script_for_model(model_type)
+        cmd = self._base_command(train_script)
+
+        learning_rate = float(train_params["learning_rate"])
+        base_model_path = normalize_filesystem_path(train_params["base_model_path"])
+
+        cmd.extend([
+            f"--pretrained_model_name_or_path={base_model_path}",
+            f"--dataset_config={dataset_toml}",
+            f"--output_dir={output_dir}",
+            f"--output_name={output_name}",
+            "--save_model_as=safetensors",
+            f"--network_dim={train_params['network_dim']}",
+            f"--network_alpha={train_params['network_alpha']}",
+            f"--learning_rate={learning_rate}",
+            f"--optimizer_type={train_params.get('optimizer_type', 'AdamW8bit')}",
+            f"--lr_scheduler={train_params.get('lr_scheduler', 'constant')}",
+        ])
+
+        if model_type == "anima":
+            qwen3_path = normalize_filesystem_path(train_params.get("qwen3_path", ""))
+            vae_path = normalize_filesystem_path(train_params.get("vae_path", ""))
+            if not qwen3_path:
+                raise ValueError("qwen3_path is required when model_type is anima")
+            if not vae_path:
+                raise ValueError("vae_path is required when model_type is anima")
+
+            cmd.extend([
+                "--network_module=networks.lora_anima",
+                f"--qwen3={qwen3_path}",
+                f"--vae={vae_path}",
+                f"--timestep_sampling={train_params.get('timestep_sampling', 'sigmoid')}",
+                f"--discrete_flow_shift={float(train_params.get('discrete_flow_shift', 1.0) or 1.0)}",
+                f"--sigmoid_scale={float(train_params.get('sigmoid_scale', 1.0) or 1.0)}",
+                f"--qwen3_max_token_length={int(train_params.get('qwen3_max_token_length', 512) or 512)}",
+                f"--t5_max_token_length={int(train_params.get('t5_max_token_length', 512) or 512)}",
+            ])
+            self._append_optional_path(cmd, "--llm_adapter_path", train_params.get("llm_adapter_path"))
+            self._append_optional_path(cmd, "--t5_tokenizer_path", train_params.get("t5_tokenizer_path"))
+            self._append_optional_path(cmd, "--attn_mode", train_params.get("attn_mode"))
+            self._append_positive_int(cmd, "--blocks_to_swap", train_params.get("blocks_to_swap"))
+            self._append_positive_int(cmd, "--vae_chunk_size", train_params.get("vae_chunk_size"))
+            self._append_float_if_set(cmd, "--self_attn_lr", train_params.get("self_attn_lr"))
+            self._append_float_if_set(cmd, "--cross_attn_lr", train_params.get("cross_attn_lr"))
+            self._append_float_if_set(cmd, "--mlp_lr", train_params.get("mlp_lr"))
+            self._append_float_if_set(cmd, "--mod_lr", train_params.get("mod_lr"))
+            self._append_float_if_set(cmd, "--llm_adapter_lr", train_params.get("llm_adapter_lr"))
+            if train_params.get("split_attn", False):
+                cmd.append("--split_attn")
+            if train_params.get("vae_disable_cache", False):
+                cmd.append("--vae_disable_cache")
+            if train_params.get("qwen_image_vae_2d", False) and self._supports_qwen_image_vae_2d:
+                cmd.append("--qwen_image_vae_2d")
+            self._append_network_args(cmd, train_params)
+        else:
+            unet_lr = self._resolve_lr(train_params.get("unet_lr"), learning_rate)
+            text_lr_base = self._resolve_lr(train_params.get("text_encoder_lr"), learning_rate)
+            text_lr1 = self._resolve_lr(train_params.get("text_encoder_lr1"), text_lr_base)
+            text_lr2 = self._resolve_lr(train_params.get("text_encoder_lr2"), text_lr_base)
+
+            cmd.extend([
+                "--network_module=networks.lora",
+                f"--unet_lr={unet_lr}",
+            ])
+            if self._supports_split_text_encoder_lr:
+                cmd.extend([
+                    f"--text_encoder_lr1={text_lr1}",
+                    f"--text_encoder_lr2={text_lr2}",
+                ])
+            else:
+                cmd.extend([
+                    "--text_encoder_lr",
+                    str(text_lr1),
+                    str(text_lr2),
+                ])
+
+        self._append_common_options(cmd, train_params)
+        cache_te = self._append_cache_options(cmd, dataset_config, train_params)
 
         train_unet_only = bool(train_params.get("train_unet_only", False))
         if cache_te:

@@ -44,3 +44,20 @@ C:\sd-scripts\venv\Scripts\python.exe -m pip install --upgrade --force-reinstall
 
 ## 反映
 Python パッケージやカスタムノードを変更したら ComfyUI を再起動してください。
+
+## Anima LoRA
+Set `model_type` in `SDScriptsTrainParams` to `anima` to run `anima_train_network.py` with `networks.lora_anima`.
+
+Required inputs:
+- `base_model_path`: Anima DiT `.safetensors` file
+- `qwen3_path`: Qwen3-0.6B text encoder file or directory
+- `vae_path`: Qwen-Image VAE `.safetensors` or `.pth` file
+
+Main Anima options:
+- `timestep_sampling`: `sigmoid`, `sigma`, `uniform`, `shift`, or `flux_shift`
+- `discrete_flow_shift`, `sigmoid_scale`
+- `blocks_to_swap`, `vae_chunk_size`, `vae_disable_cache`
+- `train_llm_adapter`, `network_reg_dims`, `network_reg_lrs`, `include_patterns`, `exclude_patterns`
+
+On the Linux server, the default `sd_scripts_path` is `~/sd-scripts`.
+

@@ -1,4 +1,4 @@
-﻿"""
+"""
 SD-Scripts LoRA training nodes for ComfyUI.
 """
 
@@ -162,7 +162,7 @@ class SDScriptsDatasetConfig:
 
 
 class SDScriptsTrainParams:
-    """Training parameter builder for sdxl_train_network.py."""
+    """Training parameter builder for sd-scripts training."""
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -171,7 +171,7 @@ class SDScriptsTrainParams:
                 "base_model_path": ("STRING", {
                     "default": "",
                     "multiline": False,
-                    "tooltip": "Path to the SDXL base model (.safetensors or Diffusers directory)."
+                    "tooltip": "Path to the SDXL base model or Anima DiT model."
                 }),
                 "network_dim": ("INT", {
                     "default": 32,
@@ -203,6 +203,10 @@ class SDScriptsTrainParams:
                 }),
             },
             "optional": {
+                "model_type": (["sdxl", "anima"], {
+                    "default": "sdxl",
+                    "tooltip": "Training script/model family to use."
+                }),
                 "unet_lr": ("FLOAT", {
                     "default": 1e-4,
                     "min": 0.0,
@@ -231,6 +235,147 @@ class SDScriptsTrainParams:
                     "step": 1e-6,
                     "tooltip": "Text Encoder 2 learning rate (0 = use text_encoder_lr)."
                 }),
+                "qwen3_path": ("STRING", {
+                    "default": "",
+                    "multiline": False,
+                    "tooltip": "Anima only: path to Qwen3-0.6B text encoder file or directory."
+                }),
+                "vae_path": ("STRING", {
+                    "default": "",
+                    "multiline": False,
+                    "tooltip": "Anima only: path to Qwen-Image VAE .safetensors or .pth."
+                }),
+                "llm_adapter_path": ("STRING", {
+                    "default": "",
+                    "multiline": False,
+                    "tooltip": "Anima only: optional separate LLM adapter weights."
+                }),
+                "t5_tokenizer_path": ("STRING", {
+                    "default": "",
+                    "multiline": False,
+                    "tooltip": "Anima only: optional T5 tokenizer directory."
+                }),
+                "timestep_sampling": (["sigmoid", "sigma", "uniform", "shift", "flux_shift"], {
+                    "default": "sigmoid",
+                    "tooltip": "Anima only: timestep sampling method."
+                }),
+                "discrete_flow_shift": ("FLOAT", {
+                    "default": 1.0,
+                    "min": 0.0,
+                    "max": 10.0,
+                    "step": 0.1,
+                    "tooltip": "Anima only: Rectified Flow timestep shift."
+                }),
+                "sigmoid_scale": ("FLOAT", {
+                    "default": 1.0,
+                    "min": 0.1,
+                    "max": 10.0,
+                    "step": 0.1,
+                    "tooltip": "Anima only: sigmoid timestep scale."
+                }),
+                "qwen3_max_token_length": ("INT", {
+                    "default": 512,
+                    "min": 1,
+                    "max": 4096,
+                    "step": 1,
+                    "tooltip": "Anima only: Qwen3 tokenizer max token length."
+                }),
+                "t5_max_token_length": ("INT", {
+                    "default": 512,
+                    "min": 1,
+                    "max": 4096,
+                    "step": 1,
+                    "tooltip": "Anima only: T5 tokenizer max token length."
+                }),
+                "attn_mode": (["", "torch", "xformers", "flash", "sageattn"], {
+                    "default": "",
+                    "tooltip": "Anima only: attention implementation; xformers requires split_attn."
+                }),
+                "split_attn": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "Anima only: split attention computation to reduce VRAM."
+                }),
+                "blocks_to_swap": ("INT", {
+                    "default": 0,
+                    "min": 0,
+                    "max": 64,
+                    "step": 1,
+                    "tooltip": "Anima only: transformer blocks to swap to CPU (0 = off)."
+                }),
+                "vae_chunk_size": ("INT", {
+                    "default": 0,
+                    "min": 0,
+                    "max": 4096,
+                    "step": 2,
+                    "tooltip": "Anima only: VAE spatial chunk size (0 = off)."
+                }),
+                "vae_disable_cache": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "Anima only: disable Qwen-Image VAE internal cache."
+                }),
+                "qwen_image_vae_2d": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "Anima only: pass --qwen_image_vae_2d when supported by sd-scripts."
+                }),
+                "train_llm_adapter": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "Anima LoRA only: include LLM adapter LoRA modules."
+                }),
+                "self_attn_lr": ("FLOAT", {
+                    "default": -1.0,
+                    "min": -1.0,
+                    "max": 1e-2,
+                    "step": 1e-5,
+                    "tooltip": "Anima full fine-tune only: self-attention LR (-1 = script default, 0 = freeze)."
+                }),
+                "cross_attn_lr": ("FLOAT", {
+                    "default": -1.0,
+                    "min": -1.0,
+                    "max": 1e-2,
+                    "step": 1e-5,
+                    "tooltip": "Anima full fine-tune only: cross-attention LR (-1 = script default, 0 = freeze)."
+                }),
+                "mlp_lr": ("FLOAT", {
+                    "default": -1.0,
+                    "min": -1.0,
+                    "max": 1e-2,
+                    "step": 1e-5,
+                    "tooltip": "Anima full fine-tune only: MLP LR (-1 = script default, 0 = freeze)."
+                }),
+                "mod_lr": ("FLOAT", {
+                    "default": -1.0,
+                    "min": -1.0,
+                    "max": 1e-2,
+                    "step": 1e-5,
+                    "tooltip": "Anima full fine-tune only: AdaLN modulation LR (-1 = script default, 0 = freeze)."
+                }),
+                "llm_adapter_lr": ("FLOAT", {
+                    "default": -1.0,
+                    "min": -1.0,
+                    "max": 1e-2,
+                    "step": 1e-5,
+                    "tooltip": "Anima full fine-tune only: LLM adapter LR (-1 = script default, 0 = freeze)."
+                }),
+                "network_reg_dims": ("STRING", {
+                    "default": "",
+                    "multiline": False,
+                    "tooltip": "Anima LoRA only: regex rank rules, e.g. .*self_attn.*=8,.*cross_attn.*=4."
+                }),
+                "network_reg_lrs": ("STRING", {
+                    "default": "",
+                    "multiline": False,
+                    "tooltip": "Anima LoRA only: regex LR rules, e.g. .*self_attn.*=1e-4."
+                }),
+                "include_patterns": ("STRING", {
+                    "default": "",
+                    "multiline": False,
+                    "tooltip": "Anima LoRA only: force-include regex patterns."
+                }),
+                "exclude_patterns": ("STRING", {
+                    "default": "",
+                    "multiline": False,
+                    "tooltip": "Anima LoRA only: additional exclude regex patterns."
+                }),
                 "optimizer_type": (["AdamW8bit", "AdamW", "Adafactor", "Lion8bit"], {
                     "default": "AdamW8bit",
                     "tooltip": "Optimizer type."
@@ -257,7 +402,7 @@ class SDScriptsTrainParams:
                 }),
                 "cache_text_encoder_outputs": ("BOOLEAN", {
                     "default": True,
-                    "tooltip": "Cache text encoder outputs (forces UNet-only training)."
+                    "tooltip": "Cache text encoder outputs (forces UNet/DiT-only training)."
                 }),
                 "cache_text_encoder_outputs_to_disk": ("BOOLEAN", {
                     "default": True,
@@ -265,7 +410,7 @@ class SDScriptsTrainParams:
                 }),
                 "train_unet_only": ("BOOLEAN", {
                     "default": False,
-                    "tooltip": "Train UNet only (overridden to true when caching text encoder outputs)."
+                    "tooltip": "Train UNet/DiT only (overridden to true when caching text encoder outputs)."
                 }),
                 "no_half_vae": ("BOOLEAN", {
                     "default": False,
@@ -320,10 +465,36 @@ class SDScriptsTrainParams:
         network_alpha,
         learning_rate,
         max_train_epochs,
+        model_type="sdxl",
         unet_lr=1e-4,
         text_encoder_lr=1e-5,
         text_encoder_lr1=0.0,
         text_encoder_lr2=0.0,
+        qwen3_path="",
+        vae_path="",
+        llm_adapter_path="",
+        t5_tokenizer_path="",
+        timestep_sampling="sigmoid",
+        discrete_flow_shift=1.0,
+        sigmoid_scale=1.0,
+        qwen3_max_token_length=512,
+        t5_max_token_length=512,
+        attn_mode="",
+        split_attn=False,
+        blocks_to_swap=0,
+        vae_chunk_size=0,
+        vae_disable_cache=True,
+        qwen_image_vae_2d=False,
+        train_llm_adapter=False,
+        self_attn_lr=-1.0,
+        cross_attn_lr=-1.0,
+        mlp_lr=-1.0,
+        mod_lr=-1.0,
+        llm_adapter_lr=-1.0,
+        network_reg_dims="",
+        network_reg_lrs="",
+        include_patterns="",
+        exclude_patterns="",
         optimizer_type="AdamW8bit",
         lr_scheduler="constant",
         mixed_precision="bf16",
@@ -342,6 +513,7 @@ class SDScriptsTrainParams:
     ):
         params = {
             "base_model_path": base_model_path,
+            "model_type": model_type,
             "network_dim": network_dim,
             "network_alpha": network_alpha,
             "learning_rate": learning_rate,
@@ -350,6 +522,31 @@ class SDScriptsTrainParams:
             "text_encoder_lr": text_encoder_lr,
             "text_encoder_lr1": text_encoder_lr1,
             "text_encoder_lr2": text_encoder_lr2,
+            "qwen3_path": qwen3_path,
+            "vae_path": vae_path,
+            "llm_adapter_path": llm_adapter_path,
+            "t5_tokenizer_path": t5_tokenizer_path,
+            "timestep_sampling": timestep_sampling,
+            "discrete_flow_shift": discrete_flow_shift,
+            "sigmoid_scale": sigmoid_scale,
+            "qwen3_max_token_length": qwen3_max_token_length,
+            "t5_max_token_length": t5_max_token_length,
+            "attn_mode": attn_mode,
+            "split_attn": split_attn,
+            "blocks_to_swap": blocks_to_swap,
+            "vae_chunk_size": vae_chunk_size,
+            "vae_disable_cache": vae_disable_cache,
+            "qwen_image_vae_2d": qwen_image_vae_2d,
+            "train_llm_adapter": train_llm_adapter,
+            "self_attn_lr": self_attn_lr,
+            "cross_attn_lr": cross_attn_lr,
+            "mlp_lr": mlp_lr,
+            "mod_lr": mod_lr,
+            "llm_adapter_lr": llm_adapter_lr,
+            "network_reg_dims": network_reg_dims,
+            "network_reg_lrs": network_reg_lrs,
+            "include_patterns": include_patterns,
+            "exclude_patterns": exclude_patterns,
             "optimizer_type": optimizer_type,
             "lr_scheduler": lr_scheduler,
             "mixed_precision": mixed_precision,
@@ -384,7 +581,7 @@ class SDScriptsLoRATrain:
                     "tooltip": "Output LoRA name."
                 }),
                 "sd_scripts_path": ("STRING", {
-                    "default": "c:\\sd-scripts",
+                    "default": "~/sd-scripts",
                     "tooltip": "Path to the sd-scripts repository."
                 }),
             },
@@ -431,7 +628,7 @@ class SDScriptsLoRATrain:
         return output_dir
 
     def train_lora(self, dataset_config, train_params, output_name,
-                   output_folder="loras", sd_scripts_path="c:\\sd-scripts"):
+                   output_folder="loras", sd_scripts_path="~/sd-scripts"):
         from .trainer import SDScriptsTrainer
 
         trainer = SDScriptsTrainer(sd_scripts_path)
